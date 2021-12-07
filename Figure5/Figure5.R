@@ -1,215 +1,205 @@
-source("/rds/project/sn206/rds-sn206-nik-zainal/users/xz388/cancer_archive04/b_1176/15_subs_20180907/00_data/sub_common.R")
+library(Biostrings)
+library(ggplot2)
+library(gridExtra)
+library(scales)
+library(plyr)
+library(reshape2)
+library(ggbeeswarm)
+library(umap)
+library(Rtsne)
+library(factoextra)
+library(org.Hs.eg.db)
 
-#########################
-# New figures 5
-#########################
-PancanSig <- read.table("./Pancan_signatures_subs_final.txt",sep = "\t",header = T, as.is = T)
-names(PancanSig)[1] <- "MutationType"
-Skin_tissueSig <- PancanSig[,c(1,which(sub("_[^_]+$","",names(PancanSig))=="Skin"))]
+donor78 <- read.table("Infos_BCOR-Mut_BCOR_WT_FinalList.txt", sep = "\t", header = T, as.is = T)
+rownames(donor78) <- donor78$Sample
+donor78 <- donor78[,-1]
+donor78$Genotype <- factor(donor78$Genotype)
+donor78$Gender <- factor(donor78$Gender)
+donor78$Group <- factor(donor78$Group)
+donor78$MDS <- factor(donor78$MDS)
+donor78$BCOR_vaf <- factor(donor78$BCOR_vaf)
 
-ips_denovo_final <- read.table("ips_final.txt", sep = "\t", header = T, as.is = T)
-ips_realdenovo_final <- ips_denovo_final
-ips_realdenovo_final$denovo <- "shared"
-ips_realdenovo_final[ips_realdenovo_final$Fibro_nALT==0,]$denovo <- "denovo"
+expression_ips <- read.table("INSIGNIA_78_Samples_Study.txt", sep = "\t", header = T, as.is = T)
+donor78 <- donor78[names(expression_ips[,-1]),]
 
-# shared
-sub_catalouge <- GenCatalogue(ips_realdenovo_final[ips_realdenovo_final$denovo=="shared",],"ips")
-mut_sig <- merge(Skin_tissueSig,sub_catalouge[,-2],by="MutationType")
-mut_sig$Mutation <- substr(mut_sig$MutationType,3,5)
-mut_sig <- mut_sig[order(mut_sig$Mutation),-dim(mut_sig)[2]]
-sig_cat <- mut_sig[,2:dim(Skin_tissueSig)[2]]
-mut_cat <- mut_sig[,(dim(Skin_tissueSig)[2]+1):dim(mut_sig)[2]]
+rownames(expression_ips) <- expression_ips$GeneID
+dds <- DESeqDataSetFromMatrix(countData = expression_ips[,-1],
+                              colData = donor78,
+                             design = ~ BCOR_vaf)
 
-a <- signature.tools.lib::SignatureFit_withBootstrap(mut_cat,sig_cat)
-write.table(a$E_median_filtered,paste0("ips_exposure_","Skin_shared",".txt"),sep = "\t",row.names = T, col.names = T, quote = F)
+# Pre-filtering
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep,]
+#dds <- DESeq(dds) # no effect to dds
 
-# denovo
-sub_catalouge <- GenCatalogue(ips_realdenovo_final[ips_realdenovo_final$denovo=="denovo",],"ips")
-mut_sig <- merge(Skin_tissueSig,sub_catalouge[,-2],by="MutationType")
-mut_sig$Mutation <- substr(mut_sig$MutationType,3,5)
-mut_sig <- mut_sig[order(mut_sig$Mutation),-dim(mut_sig)[2]]
-sig_cat <- mut_sig[,2:dim(Skin_tissueSig)[2]]
-mut_cat <- mut_sig[,(dim(Skin_tissueSig)[2]+1):dim(mut_sig)[2]]
-
-a <- signature.tools.lib::SignatureFit_withBootstrap(mut_cat,sig_cat)
-write.table(a$E_median_filtered,paste0("ips_exposure_","Skin_denovo",".txt"),sep = "\t",row.names = T, col.names = T, quote = F)
-
-# Fig2A
-Exposure_shared <- read.table("ips_exposure_Skin_shared.txt", sep = "\t", header = T, as.is = T)
-sample_exposure <- as.data.frame(Exposure_shared)
-sample_exposure$Sig <- rownames(sample_exposure)
-sample_exposure_melt <- melt(sample_exposure,c("Sig"))
-names(sample_exposure_melt) <- c("Sig","ips","exposure")
-sample_exposure_melt[sample_exposure_melt$Sig=="Skin_A","Sig"] <- "Culture"
-sample_exposure_melt[sample_exposure_melt$Sig=="Skin_D","Sig"] <- "UV_Skin_D"
-sample_exposure_melt[sample_exposure_melt$Sig=="Skin_J","Sig"] <- "UV_Skin_J"
-sample_exposure_melt$ips <- chartr(".", "-", sample_exposure_melt$ips)
-sample_exposure_melt$denovo <- "shared"
-sample_exposure_melt_shared <- sample_exposure_melt
-
-if(plot==TRUE){
-  cbbPalette <- c("#000000", "#F0E442","#F0E442", "#F0E442", "#F0E442", "#F0E442", "#F0E442", "#F0E442","#CC79A7", "#CC79A7")
-  pdf(file="ips_sub_SigExposure_sharedwithFibro.pdf", onefile=TRUE,height=3,width=8, useDingbats=FALSE)
-  p <- ggplot(sample_exposure_melt_shared,aes(x=ips,y=exposure,fill=Sig))+geom_bar(stat="identity", width=.8, position="fill")+scale_fill_manual(values=cbbPalette)
-  p <- p+scale_x_discrete(limits = as.character(summary_subs[,"ips"]))+xlab("ips")
-  #p <- p+ scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),labels = trans_format("log10", math_format(10^.x)))
-  p <- p+theme(axis.text.x=element_blank(),
+# vst transformation
+vstd <- vst(dds, blind=FALSE)
+pcadata<-plotPCA(vstd,intgroup=c("BCOR_vaf","Gender"), returnData = TRUE)
+#print(plot_pca)
+percentVar <- round(100 * attr(pcadata, "percentVar")) 
+pdf(file="PCA_expression_BCOR.pdf", onefile=TRUE,height=3.5,width=5, useDingbats=FALSE,encoding = "ISOLatin2.enc")
+p <- ggplot(pcadata, aes(x=PC1, y=PC2,colour=BCOR_vaf, shape=Gender)) +  geom_point(size=3)+
+  scale_shape_manual(values = c(Male = 17, Female = 16))+
+  scale_colour_manual(values=c("#D55E00","#56B4E9", "#E69F00", "#999999"))+
+#  geom_text_repel(aes_string(label = "name"),size=3.5)+
+  xlab(paste0("PC1: ", percentVar[1], "% variance")) + 
+  ylab(paste0("PC2: ", percentVar[2], "% variance"))
+p <- p + theme(axis.text.x=element_text(size=10,colour = "black"),
                axis.text.y=element_text(size=10,colour = "black"),
+               axis.title.x = element_text(size=15),
+               axis.title.y = element_text(size=15),
+               plot.title = element_text(size=10),
                panel.grid.minor.x=element_blank(),
                panel.grid.major.x=element_blank(),
                panel.grid.major.y = element_blank(),
                panel.grid.minor.y = element_blank(),
                panel.background = element_rect(fill = "white"),
                panel.border = element_rect(colour = "black", fill=NA))
-  print(p)
-  dev.off()
-  
-}
+print(p)
+dev.off()
 
-Exposure_denovo <- read.table("ips_exposure_Skin_denovo.txt", sep = "\t", header = T, as.is = T)
-sample_exposure <- as.data.frame(Exposure_denovo)
-sample_exposure$Sig <- rownames(sample_exposure)
-sample_exposure_melt <- melt(sample_exposure,c("Sig"))
-names(sample_exposure_melt) <- c("Sig","ips","exposure")
-sample_exposure_melt[sample_exposure_melt$Sig=="Skin_A","Sig"] <- "Culture"
-sample_exposure_melt[sample_exposure_melt$Sig=="Skin_D","Sig"] <- "UV_Skin_D"
-sample_exposure_melt[sample_exposure_melt$Sig=="Skin_J","Sig"] <- "UV_Skin_J"
-sample_exposure_melt$ips <- chartr(".", "-", sample_exposure_melt$ips)
-sample_exposure_melt$denovo <- "denovo"
-sample_exposure_melt_denovo <- sample_exposure_melt
-
-if(plot==TRUE){
-  cbbPalette <- c("#000000", "#F0E442","#F0E442", "#F0E442", "#F0E442", "#F0E442", "#F0E442", "#F0E442","#CC79A7", "#CC79A7")
-  pdf(file="ips_sub_SigExposure_denovo.pdf", onefile=TRUE,height=3,width=8, useDingbats=FALSE)
-  p <- ggplot(sample_exposure_melt_denovo,aes(x=ips,y=exposure,fill=Sig))+geom_bar(stat="identity", width=.8, position="fill")+scale_fill_manual(values=cbbPalette)
-  p <- p+scale_x_discrete(limits = as.character(summary_subs[,"ips"]))+xlab("ips")
-  #p <- p+ scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),labels = trans_format("log10", math_format(10^.x)))
-  p <- p+theme(axis.text.x=element_blank(),
+require("ggrepel")
+pdf(file="PCA_expression_BCOR_withlabel.pdf", onefile=TRUE,height=10,width=15, useDingbats=FALSE,encoding = "ISOLatin2.enc")
+p <- ggplot(pcadata, aes(x=PC1, y=PC2,colour=BCOR_vaf, shape=Gender)) +  geom_point(size=3)+
+  scale_shape_manual(values = c(Male = 17, Female = 16))+
+  scale_colour_manual(values=c("#D55E00","#56B4E9", "#E69F00", "#999999"))+
+  geom_text_repel(aes_string(label = "name"),size=3.5)+
+  xlab(paste0("PC1: ", percentVar[1], "% variance")) + 
+  ylab(paste0("PC2: ", percentVar[2], "% variance"))
+p <- p + theme(axis.text.x=element_text(size=10,colour = "black"),
                axis.text.y=element_text(size=10,colour = "black"),
+               axis.title.x = element_text(size=15),
+               axis.title.y = element_text(size=15),
+               plot.title = element_text(size=10),
                panel.grid.minor.x=element_blank(),
                panel.grid.major.x=element_blank(),
                panel.grid.major.y = element_blank(),
                panel.grid.minor.y = element_blank(),
                panel.background = element_rect(fill = "white"),
                panel.border = element_rect(colour = "black", fill=NA))
-  print(p)
-  dev.off()
-  
-}
-
-# Figure 5B
-# all sig exposure
-sample_exposure_melt_all <- read.table("ips_sample_sig_exposure_denovo_shared.txt", sep = "\t", header = T, as.is = T)
-sample_exposure <- dcast(sample_exposure_melt_all,ips+denovo~Sig,value.var="exposure")
-sample_exposure$UV_Skin_D_J <- sample_exposure$UV_Skin_D + sample_exposure$UV_Skin_J
-sample_exposure_melt2 <- melt(sample_exposure,c("ips","denovo"))
-sample_exposure_melt2 <- sample_exposure_melt2[!sample_exposure_melt2$variable %in%c("UV_Skin_D","UV_Skin_J"),]
-names(sample_exposure_melt2) <- c("Sample","denovo","type","Freq")
-a2 <- dcast(sample_exposure_melt2,Sample+denovo~type,value.var="Freq")
-a2[,3:dim(a2)[2]] <-  a2[,3:dim(a2)[2]]/rowSums(a2[,3:dim(a2)[2]])[row(a2[,3:dim(a2)[2]])]
-a3 <- melt(a2,c("Sample","denovo"))
-names(a3) <- c("Sample","denovo","type","expo")
-cbbPalette <- c("#E69F00", "#56B4E9")
-pdf(file="SubSigs_ips_subclonecatalogue_exposure_share_unique.pdf", onefile=TRUE,height=2.3,width=4, useDingbats=FALSE)
-p <- ggplot(a3,aes(x=type, y=expo, fill=denovo))+geom_boxplot(outlier.size=0.5)+xlab("Number of samples")+scale_fill_manual(values=cbbPalette)+scale_y_continuous(labels=percent)
-#p <- p+stat_summary(fun.data="mean_sdl",  fun.args = list(mult=1), geom="pointrange", color = denovo)
-#p <- p+scale_y_continuous(breaks = seq(-350,350,50), labels = c(seq(350,0,-50),seq(50,350,50))) 
-p <- p+theme(axis.text.x=element_text(size=5,angle=90,vjust=0.5,colour = "black"),
-             axis.text.y=element_text(size=10,colour = "black"),
-             axis.title.x = element_text(size=15),
-             axis.title.y = element_text(size=15),
-             plot.title = element_text(size=10),
-             panel.grid.minor.x=element_blank(),
-             panel.grid.major.x=element_blank(),
-             panel.grid.major.y = element_blank(),
-             panel.grid.minor.y = element_blank(),
-             panel.background = element_rect(fill = "white"),
-             panel.border = element_rect(colour = "black", fill=NA))
 print(p)
 dev.off()
 
-# Figure 5C
-# signature emerge order
-sample_exposure_melt_all <- read.table("ips_sample_sig_exposure_denovo_shared.txt", sep = "\t", header = T, as.is = T)
-sample_exposure <- dcast(sample_exposure_melt_all,ips+denovo~Sig,value.var="exposure")
-sample_exposure$UV_Skin_D_J <- sample_exposure$UV_Skin_D + sample_exposure$UV_Skin_J
-sample_exposure_melt2 <- melt(sample_exposure,c("ips","denovo"))
-sample_exposure_melt2 <- sample_exposure_melt2[!sample_exposure_melt2$variable %in%c("UV_Skin_D","UV_Skin_J"),]
-sample_exposure_melt2$sig_2 <- 1
-sample_exposure_melt2[sample_exposure_melt2$value==0,"sig_2"] <- 0
-sample_exposure_melt2_dcast <- dcast(sample_exposure_melt2,variable~denovo,value.var="sig_2",fun.aggregate=sum)
-sample_exposure_melt3 <- melt(sample_exposure_melt2_dcast,c("variable"))
-names(sample_exposure_melt3) <- c("Sig","type","Freq")
-sample_exposure_melt3[sample_exposure_melt3$type=="shared","Freq"] <- -1*sample_exposure_melt3[sample_exposure_melt3$type=="shared","Freq"] 
 
-cbbPalette <- c("#E69F00", "#56B4E9")
-pdf(file="Subsigs_ips_subclonecatalogue_emerge_share_unique.pdf", onefile=TRUE,height=3,width=5, useDingbats=FALSE)
-p <- ggplot(sample_exposure_melt3,aes(x=Sig, y=Freq, fill=type))+geom_bar(stat="identity",width=0.6)+xlab("Number of samples")+scale_fill_manual(values=cbbPalette)
-#p <- p+scale_y_continuous(breaks = seq(-350,350,50), labels = c(seq(350,0,-50),seq(50,350,50))) 
-p <- p+scale_y_continuous(limits=c(-350,350))
-p <- p+ coord_flip()+theme(axis.text.x=element_text(size=10,colour = "black"),
-                           axis.text.y=element_text(size=10,colour = "black"),
-                           axis.title.x = element_text(size=15),
-                           axis.title.y = element_text(size=15),
-                           plot.title = element_text(size=10),
-                           panel.grid.minor.x=element_blank(),
-                           panel.grid.major.x=element_blank(),
-                           panel.grid.major.y = element_blank(),
-                           panel.grid.minor.y = element_blank(),
-                           panel.background = element_rect(fill = "white"),
-                           panel.border = element_rect(colour = "black", fill=NA))
+################################
+# Differentiation_D0_D6_D12_D27
+# 34,40
+################################
+expression_2ips <- read.table("Counts_Directed_Differentiation_D0_D6_D12_D27.txt", sep = "\t", header = T, as.is = T)
+
+# Time course of PCA of all gene expression for iPSCs MSH34i and MSH40i
+donor2 <- read.table("Info_AllCells_BCOR_Low_vs_High_34_40_Samples.txt", sep = "\t", header = T, as.is = T)
+rownames(donor2) <- donor2$Sample
+donor2 <- donor2[,2:4]
+donor2$BCOR_Expression <- factor(donor2$BCOR_Expression)
+donor2$CellLine <- factor(donor2$CellLine)
+donor2$CellType <- factor(donor2$CellType)
+
+rownames(expression_2ips) <- expression_2ips$GeneID
+dds <- DESeqDataSetFromMatrix(countData = expression_2ips[,-1],
+                              colData = donor2,
+                              design = ~ BCOR_Expression)
+
+# Pre-filtering
+keep <- rowSums(counts(dds)) >= 10
+dds <- dds[keep,]
+#dds <- DESeq(dds) # no effect to dds
+
+# vst transformation
+vstd <- vst(dds, blind=FALSE)
+pcadata<-plotPCA(vstd,intgroup=c("BCOR_Expression","CellType"), returnData = TRUE)
+#print(plot_pca)
+percentVar <- round(100 * attr(pcadata, "percentVar")) 
+pdf(file="PCA_expression_BCOR_34_40.pdf", onefile=TRUE,height=3.5,width=5, useDingbats=FALSE,encoding = "ISOLatin2.enc")
+p <- ggplot(pcadata, aes(x=PC1, y=PC2,colour=BCOR_Expression, shape=CellType)) +  geom_point(size=3)+
+  scale_shape_manual(values = c(0,3,4,8))+
+  scale_colour_manual(values=c("#D55E00","#56B4E9", "#E69F00", "#999999"))+
+  #  geom_text_repel(aes_string(label = "name"),size=3.5)+
+  xlab(paste0("PC1: ", percentVar[1], "% variance")) + 
+  ylab(paste0("PC2: ", percentVar[2], "% variance"))
+p <- p + theme(axis.text.x=element_text(size=10,colour = "black"),
+               axis.text.y=element_text(size=10,colour = "black"),
+               axis.title.x = element_text(size=15),
+               axis.title.y = element_text(size=15),
+               plot.title = element_text(size=10),
+               panel.grid.minor.x=element_blank(),
+               panel.grid.major.x=element_blank(),
+               panel.grid.major.y = element_blank(),
+               panel.grid.minor.y = element_blank(),
+               panel.background = element_rect(fill = "white"),
+               panel.border = element_rect(colour = "black", fill=NA))
 print(p)
 dev.off()
 
-# Figure 5D
-pass <- read.table("./hipsci_files.tsv", sep = "\t", header = T, as.is = T,check.names = F)
-names(pass) <- c("ips","celltype","assay","passage","disease","sex")
-Exposure <- read.table("../ips_exposure_Skin.txt", sep = "\t", header = T, as.is = T)
-sample_exposure <- as.data.frame(Exposure)
-sample_exposure$Sig <- rownames(sample_exposure)
-sample_exposure_melt <- melt(sample_exposure,c("Sig"))
-names(sample_exposure_melt) <- c("Sig","ips","exposure")
-sample_exposure_melt$ips <- chartr(".", "-", sample_exposure_melt$ips)
-sample_exposure_sig <- dcast(sample_exposure_melt,ips~Sig,value.var="exposure")
-sample_exposure_sig_pass <- merge(sample_exposure_sig,pass[,c(1,4)],by="ips")
-sample_exposure_sig_pass <- sample_exposure_sig_pass[sample_exposure_sig_pass$Skin_A>0,]
-sample_exposure_sig_pass$allmutation <- rowSums(sample_exposure_sig_pass[,-1]) 
-sample_exposure_sig_pass$UV <- sample_exposure_sig_pass$Skin_D+sample_exposure_sig_pass$Skin_J
 
-# ips ~ culture
-pdf(file="ips_sub_passage_correlation_culture.pdf", onefile=TRUE,height=5,width=5, useDingbats=FALSE)
-p <- ggplot(sample_exposure_sig_pass,aes(x=passage,y=Skin_A))+geom_point()+geom_smooth(method="lm", colour="black")+xlab("Signature 18")
-p <- p+theme(axis.text.x=element_text(size=10,colour = "black"),
-             axis.text.y=element_text(size=10,colour = "black"),
-             panel.grid.minor.x=element_blank(),
-             panel.grid.major.x=element_blank(),
-             panel.grid.major.y = element_blank(),
-             panel.grid.minor.y = element_blank(),
-             panel.background = element_rect(fill = "white"),
-             panel.border = element_rect(colour = "black", fill=NA))
-print(p)
+# Time course of marker genes
+expression_2ips <- read.table("Counts_Directed_Differentiation_D0_D6_D12_D27.txt", sep = "\t", header = T, as.is = T)
+markers <- read.table("Heatmap_Markers_Ordered.txt", sep = "\t", header = T, as.is = T)
+marker_expression <- merge(expression_2ips,markers,by="GeneID")
+rownames(marker_expression) <- marker_expression$GeneName
+#marker_expression <- marker_expression[order(marker_expression$Group, marker_expression$GeneName),]
+
+marker_expression <- marker_expression[match(markers$GeneName,marker_expression$GeneName),]
+donor2 <- read.table("Info_AllCells_BCOR_Low_vs_High_34_40_Samples.txt", sep = "\t", header = T, as.is = T)
+rownames(donor2) <- donor2$Sample
+donor2 <- donor2[,2:4]
+donor2$BCOR_Expression <- factor(donor2$BCOR_Expression)
+donor2$CellLine <- factor(donor2$CellLine)
+donor2$CellType <- factor(donor2$CellType)
+
+
+dds2 <- DESeqDataSetFromMatrix(countData = marker_expression[,2:25],
+                              colData = donor2,
+                              design = ~ BCOR_Expression)
+
+# Pre-filtering
+keep <- rowSums(counts(dds2)) >= 10
+dds2 <- dds2[keep,]
+
+dds2 <- estimateSizeFactors(dds2)
+dds2_nor <- counts(dds2, normalized=TRUE)
+dds2_nor_relative <- log2(dds2_nor+1)-rowMeans(log2(dds2_nor+1))
+msh34_nor_relative <- dds2_nor_relative[,c(1:3,7:9,13:15,19:21)]
+msh40_nor_relative <- dds2_nor_relative[,c(4:6,10:12,16:18,22:24)]
+
+
+sample_nor_relatvie <- msh40_nor_relative
+
+# heatmap
+#colnames(sample_nor_relatvie) <- sig_total$MutationType
+sample_nor_relatvie <- round(sample_nor_relatvie,3)
+# creates a own color palette from red to green
+my_palette <- colorRampPalette(c("blue","white", "red"))(n = 128)
+
+# (optional) defines the color breaks manually for a "skewed" color transition
+col_breaks = c(-14,  # for blue
+               0,           # for white
+               1,max(sample_nor_relatvie))             # for green
+
+pdf(file="msh40_nor_relative_heatmap_log2_v32.pdf", h=8, w=10, onefile=TRUE)
+gplots::heatmap.2(sample_nor_relatvie,
+                 # hclustfun=function(x) hclust(x,method = 'median'),
+                  reorderfun=function(d, w) reorder(d, w, agglo.FUN = mean), # Reorder dendrogram by branch mean rather than sum
+                #  main = "Heatmap of substitution signature", # heat map title
+                  notecol="black",      # change font color of cell labels to black
+                  density.info="none",  # turns off density plot inside color legend
+                  trace="none",         # turns off trace lines inside the heat map
+                  margins =c(12,9),     # widens margins around plot
+                  keysize=1,
+                  col=my_palette,       # use on color palette defined earlier
+                  key = TRUE, 
+                  ColSideColors=rep(c("#CCCCCC","#999999","#666666","#333333"), each=3),
+                  RowSideColors=rep(c("#E4BFF7","#EB7CF7","#F200FF","#820793"), c(9,10,12,7)),
+    #              breaks=col_breaks,    # enable color transition at specified limits
+                 # dendrogram="row",     # only draw a row dendrogram
+                  Rowv = "NA",           # turn off row clustering
+                  Colv="NA")            # turn off column clustering
 dev.off()
 
-res <- cor.test(sample_exposure_sig_pass$passage, sample_exposure_sig_pass$Skin_A, method = "pearson") # cor: 0.3273958; p-value = 5.013e-09 
 
-# Figure S2
+####################### END ####################### 
 
-#### Passage time distribution
 
-pdf(file="ips_passage_distribution.pdf", onefile=TRUE,height=3,width=3.5, useDingbats=FALSE)
-#p <- ggplot(pass,aes(x=celltype,y=passage))+ geom_boxplot()+geom_quasirandom()
-p <- ggplot(pass,aes(x=passage))+ geom_histogram()
-p <- p+theme(axis.text.x=element_text(size=10,colour = "black"),
-             axis.text.y=element_text(size=10,colour = "black"),
-             panel.grid.minor.x=element_blank(),
-             panel.grid.major.x=element_blank(),
-             panel.grid.major.y = element_blank(),
-             panel.grid.minor.y = element_blank(),
-             panel.background = element_rect(fill = "white"),
-             panel.border = element_rect(colour = "black", fill=NA))
-print(p)
-dev.off()
 
-median(pass$passage)
-sd(pass$passage)
+
 
