@@ -1,7 +1,7 @@
 source("/rds/project/sn206/rds-sn206-nik-zainal/users/xz388/cancer_archive04/b_1176/15_subs_20180907/00_data/sub_common.R")
 
 #########################
-# New figures 5
+# New figures 6
 #########################
 PancanSig <- read.table("./Pancan_signatures_subs_final.txt",sep = "\t",header = T, as.is = T)
 names(PancanSig)[1] <- "MutationType"
@@ -34,7 +34,7 @@ mut_cat <- mut_sig[,(dim(Skin_tissueSig)[2]+1):dim(mut_sig)[2]]
 a <- signature.tools.lib::SignatureFit_withBootstrap(mut_cat,sig_cat)
 write.table(a$E_median_filtered,paste0("ips_exposure_","Skin_denovo",".txt"),sep = "\t",row.names = T, col.names = T, quote = F)
 
-# Fig2A
+# Fig6A
 Exposure_shared <- read.table("ips_exposure_Skin_shared.txt", sep = "\t", header = T, as.is = T)
 sample_exposure <- as.data.frame(Exposure_shared)
 sample_exposure$Sig <- rownames(sample_exposure)
@@ -97,7 +97,7 @@ if(plot==TRUE){
   
 }
 
-# Figure 5B
+# Figure 6B
 # all sig exposure
 sample_exposure_melt_all <- read.table("ips_sample_sig_exposure_denovo_shared.txt", sep = "\t", header = T, as.is = T)
 sample_exposure <- dcast(sample_exposure_melt_all,ips+denovo~Sig,value.var="exposure")
@@ -191,25 +191,4 @@ print(p)
 dev.off()
 
 res <- cor.test(sample_exposure_sig_pass$passage, sample_exposure_sig_pass$Skin_A, method = "pearson") # cor: 0.3273958; p-value = 5.013e-09 
-
-# Figure S2
-
-#### Passage time distribution
-
-pdf(file="ips_passage_distribution.pdf", onefile=TRUE,height=3,width=3.5, useDingbats=FALSE)
-#p <- ggplot(pass,aes(x=celltype,y=passage))+ geom_boxplot()+geom_quasirandom()
-p <- ggplot(pass,aes(x=passage))+ geom_histogram()
-p <- p+theme(axis.text.x=element_text(size=10,colour = "black"),
-             axis.text.y=element_text(size=10,colour = "black"),
-             panel.grid.minor.x=element_blank(),
-             panel.grid.major.x=element_blank(),
-             panel.grid.major.y = element_blank(),
-             panel.grid.minor.y = element_blank(),
-             panel.background = element_rect(fill = "white"),
-             panel.border = element_rect(colour = "black", fill=NA))
-print(p)
-dev.off()
-
-median(pass$passage)
-sd(pass$passage)
 
